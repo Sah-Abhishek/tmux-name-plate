@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# nameplate: set, show or clear the name plate of a tmux session.
+
+usage() {
+	cat <<'USAGE'
+Usage:
+  nameplate                      show the current name plate
+  nameplate NAME...              set the name plate (e.g. nameplate Client X - prod)
+  nameplate --clear              remove the name plate
+
+Options:
+  --bg COLOUR    plate background (e.g. red, green, colour208, "#ff8800")
+  --fg COLOUR    plate text colour
+  -g             apply to the whole tmux server (every session) instead of this one
+  -t TARGET      target session (default: the current one)
+  -h, --help     show this help
+USAGE
+}
+
+# Show the pane top border (where the plate is drawn) only in windows whose session
+# has a name; called by the hooks in nameplate.tmux.
+refresh() {
+	tmux list-windows -a -F '#{window_id} #{?#{@nameplate},1,0}' | while read -r win named; do
+		if [ "$named" = 1 ]; then
+			tmux set-option -w -t "$win" pane-border-status top
+		else
+			tmux set-option -w -u -t "$win" pane-border-status
+		fi
+	done
+}
+
+scope=()
+target=()
+clear=0
+fg=""
+bg=""
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-h | --help) usage; exit 0 ;;
+	--refresh) refresh; exit 0 ;;
+	-g) scope=(-g); shift ;;
+	-t) target=(-t "$2"); shift 2 ;;
+	--clear) clear=1; shift ;;
+	--fg) fg="$2"; shift 2 ;;
+	--bg) bg="$2"; shift 2 ;;
+	--) shift; break ;;
+	-*) echo "nameplate: unknown option $1" >&2; usage >&2; exit 2 ;;
+	*) break ;;
+	esac
+done
+
+if [ -z "$TMUX" ] && [ ${#target[@]} -eq 0 ]; then
+	echo "nameplate: not inside tmux (use -t SESSION to target one)" >&2
+	exit 1
+fi
+
+# -g sets the server-wide default; without it the option is per session.
+opts=("${scope[@]}")
+[ ${#scope[@]} -eq 0 ] && opts=("${target[@]}")
+
+[ -n "$fg" ] && tmux set-option "${opts[@]}" @nameplate_fg "$fg"
+[ -n "$bg" ] && tmux set-option "${opts[@]}" @nameplate_bg "$bg"
+
+if [ $clear -eq 1 ]; then
+	tmux set-option -u "${opts[@]}" @nameplate
+	[ ${#scope[@]} -eq 0 ] && tmux set-option -u "${opts[@]}" @nameplate_fg 2>/dev/null
+	[ ${#scope[@]} -eq 0 ] && tmux set-option -u "${opts[@]}" @nameplate_bg 2>/dev/null
+elif [ $# -gt 0 ]; then
+	name="$*"
+	if [ -z "$name" ]; then
+		tmux set-option -u "${opts[@]}" @nameplate
+	else
+		tmux set-option "${opts[@]}" @nameplate "$name"
+	fi
+elif [ -z "$fg$bg" ]; then
+	tmux display-message -p "${target[@]}" '#{@nameplate}'
+fi
